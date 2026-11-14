@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Mudalali - Sri Lankan SME Business OS</title>
+    <meta name="description" content="Mobile-first business operating system for Sri Lankan SMEs: credit books (naya potha), instalment collections, multi-branch physical inventory, cheque tracker, and fast POS." />
+    <meta property="og:title" content="Mudalali - Sri Lankan SME Business OS" />
+    <meta property="og:description" content="Mobile-first business operating system for Sri Lankan SMEs: credit books (naya potha), instalment collections, multi-branch physical inventory, cheque tracker, and fast POS." />
+    <meta property="og:type" content="website" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+    <script>
+      (function() {
+        // Intercept and suppress HMR / WebSocket disconnection errors in iframe environment
+        function isHmrError(err) {
+          if (!err) return false;
+          var msg = (err.message || err.reason || String(err)).toLowerCase();
+          return msg.indexOf('websocket') !== -1 || 
+                 msg.indexOf('vite:ws') !== -1 || 
+                 msg.indexOf('hmr') !== -1 || 
+                 msg.indexOf('closed without opened') !== -1;
+        }
+        window.addEventListener('unhandledrejection', function(e) {
+          if (isHmrError(e.reason)) {
+            e.preventDefault();
+            e.stopImmediatePropagation();
+          }
+        }, true);
+        window.addEventListener('error', function(e) {
+          if (isHmrError(e.error) || isHmrError(e.message) || (e.filename && e.filename.indexOf('@vite/client') !== -1)) {
+            e.preventDefault();
+            e.stopImmediatePropagation();
+          }
+        }, true);
+
+        // Synchronize dark/light theme on initial page load
+        try {
+          var savedTheme = localStorage.getItem('mudalali_os_data_v1_theme');
+          if (savedTheme === 'dark' || (!savedTheme && window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
+            document.documentElement.classList.add('dark');
+          } else if (savedTheme === 'light') {
+            document.documentElement.classList.remove('dark');
+          }
+        } catch (e) {}
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
+

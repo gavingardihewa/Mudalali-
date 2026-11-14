@@ -1,0 +1,6 @@
+{
+  "name": "Mudalali - Sri Lankan SME Business OS",
+  "description": "Mobile-first business operating system for Sri Lankan SMEs: credit books (naya potha), instalment collections, multi-branch physical inventory, cheque tracker, and fast POS.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
