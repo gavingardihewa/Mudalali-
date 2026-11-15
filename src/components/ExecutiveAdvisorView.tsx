@@ -46,7 +46,13 @@ export const ExecutiveAdvisorView: React.FC = () => {
     sales,
     suppliers,
     setActiveTab,
-    setIsTransferModalOpen
+    setIsTransferModalOpen,
+    backendAnalytics,
+    isAnalyticsSyncing,
+    simulatedPurchaseAmount,
+    setSimulatedPurchaseAmount,
+    refreshBackendAnalytics,
+    currentUser
   } = useApp();
 
   const [selectedQuery, setSelectedQuery] = useState<ExecutiveQueryId>('collected_this_month');
@@ -54,20 +60,26 @@ export const ExecutiveAdvisorView: React.FC = () => {
   const [isAiLoading, setIsAiLoading] = useState(false);
   const [aiAnswer, setAiAnswer] = useState<string | null>(null);
 
-  // Simulation slider for question 6: "Can I afford to purchase another Rs. X worth of stock?"
-  const [simulatedPurchaseAmount, setSimulatedPurchaseAmount] = useState<number>(2000000);
-
-  // 1. Calculations: How much did I actually collect this month?
-  const posCashCollected = dailyDrawer.totalCashSales;
-  const creditCashCollected = dailyDrawer.totalCreditCollections;
-  const instalmentCashCollected = dailyDrawer.totalInstalmentCollections;
-  const clearedCustomerCheques = cheques
-    .filter(c => c.type === 'received' && c.status === 'cleared')
-    .reduce((s, c) => s + c.amount, 0);
+  // 1. Server-Computed Cash Flow & Realized Collections (with immediate safe fallback)
+  const cashFlow = backendAnalytics?.cashFlow;
+  const posCashCollected = cashFlow?.posCashCollected ?? dailyDrawer.totalCashSales;
+  const creditCashCollected = cashFlow?.creditCashCollected ?? dailyDrawer.totalCreditCollections;
+  const instalmentCashCollected = cashFlow?.instalmentCashCollected ?? dailyDrawer.totalInstalmentCollections;
+  const clearedCustomerCheques =
+    cashFlow?.clearedCustomerCheques ??
+    cheques
+      .filter(c => c.type === 'received' && c.status === 'cleared')
+      .reduce((s, c) => s + c.amount, 0);
   const totalActuallyCollected =
+    cashFlow?.totalActuallyCollected ??
     posCashCollected + creditCashCollected + instalmentCashCollected + clearedCustomerCheques;
+  const pettyCashExpenses = cashFlow?.pettyCashExpenses ?? dailyDrawer.totalCashExpenses;
+  const cashConversionRatePct =
+    cashFlow?.cashConversionRatePct ??
+    Number(((totalActuallyCollected / Math.max(1, totalActuallyCollected + pettyCashExpenses)) * 100).toFixed(1));
 
-  // 2. Calculations: Which customers have not paid?
+  // 2. Server-Computed Debtor Credit Risk Assessments & Overdue Wara
+  const riskAssessments = backendAnalytics?.debtors.riskAssessments ?? [];
   const unpaidCreditDebtors = creditCustomers
     .filter(c => c.totalOutstanding > 0)
     .sort((a, b) => b.totalOutstanding - a.totalOutstanding);
@@ -78,88 +90,118 @@ export const ExecutiveAdvisorView: React.FC = () => {
       .map(s => ({ plan, schedule: s }))
   );
 
-  const returnedChequeCustomers = cheques.filter(c => c.status === 'returned');
+  const totalUnpaidReceivables =
+    (backendAnalytics?.debtors.totalCreditReceivables ??
+      unpaidCreditDebtors.reduce((s, c) => s + c.totalOutstanding, 0)) +
+    (backendAnalytics?.debtors.totalOverdueInstalments ??
+      overdueInstalments.reduce((s, i) => s + i.schedule.amount, 0));
 
-  // 3. Calculations: Which products generate the highest margins?
-  const marginRankedProducts = [...products]
-    .map(p => {
-      const retailProfit = p.retailPrice - p.costPrice;
-      const retailMarginPct = (retailProfit / p.retailPrice) * 100;
-      const wholesaleProfit = p.wholesalePrice - p.costPrice;
-      const wholesaleMarginPct = (wholesaleProfit / p.wholesalePrice) * 100;
-      const totalUnits = Object.values(p.stocks).reduce((a, b) => a + b, 0);
-      const stockValueCost = totalUnits * p.costPrice;
-      const potentialProfit = totalUnits * retailProfit;
+  // 3. Server-Computed Margins & Reorder Quantities
+  const marginRankedProducts =
+    backendAnalytics?.marginsAndInventory.rankedProducts ??
+    [...products]
+      .map(p => {
+        const retailProfit = p.retailPrice - p.costPrice;
+        const retailMarginPct = p.retailPrice > 0 ? Number(((retailProfit / p.retailPrice) * 100).toFixed(1)) : 0;
+        const wholesaleProfit = p.wholesalePrice - p.costPrice;
+        const wholesaleMarginPct = p.wholesalePrice > 0 ? Number(((wholesaleProfit / p.wholesalePrice) * 100).toFixed(1)) : 0;
+        const totalUnits = Object.values(p.stocks).reduce((a, b) => a + b, 0);
+        return {
+          id: p.id,
+          code: p.code,
+          name: p.name,
+          category: p.category,
+          costPrice: p.costPrice,
+          wholesalePrice: p.wholesalePrice,
+          retailPrice: p.retailPrice,
+          unit: p.unit,
+          retailProfit,
+          retailMarginPct,
+          wholesaleProfit,
+          wholesaleMarginPct,
+          totalUnits,
+          stockValueCost: totalUnits * p.costPrice,
+          potentialProfit: totalUnits * retailProfit,
+          suggestedReorderUnits: totalUnits <= p.minStockLevel * 2 ? Math.max(1, p.minStockLevel * 4 - totalUnits) : 0,
+          estimatedReorderCost: 0
+        };
+      })
+      .sort((a, b) => b.retailMarginPct - a.retailMarginPct);
 
+  // 4. Server-Computed Composite Branch Diagnostics & Health Scores
+  const branchDiagnostics =
+    backendAnalytics?.branches.diagnostics ??
+    branches.map(b => {
+      const stockCount = products.reduce((sum, p) => sum + (p.stocks[b.id] || 0), 0);
+      const lowStockCount = products.filter(p => (p.stocks[b.id] || 0) <= p.minStockLevel).length;
+      const outOfStockCount = products.filter(p => (p.stocks[b.id] || 0) === 0).length;
+      const creditTotal = creditCustomers
+        .filter(c => c.branchId === b.id)
+        .reduce((s, c) => s + c.totalOutstanding, 0);
+      const branchPlans = instalmentPlans.filter(p => p.branchId === b.id);
+      const overduePlans = branchPlans.filter(p => p.schedules.some(s => s.status === 'overdue')).length;
+      const riskScore = Math.min(100, Math.round(lowStockCount * 15 + (overduePlans / Math.max(1, branchPlans.length)) * 40 + (creditTotal > 100000 ? 20 : 0)));
       return {
-        ...p,
-        retailProfit,
-        retailMarginPct,
-        wholesaleProfit,
-        wholesaleMarginPct,
-        totalUnits,
-        stockValueCost,
-        potentialProfit
+        branchId: b.id,
+        branchName: b.name,
+        address: b.address,
+        manager: b.manager,
+        stockCount,
+        inventoryValueCost: 0,
+        lowStockCount,
+        outOfStockCount,
+        creditTotal,
+        activePlans: branchPlans.length,
+        overduePlans,
+        overdueInstalmentAmount: 0,
+        returnedChequesCount: 0,
+        salesCount: sales.filter(s => s.branchId === b.id).length,
+        salesRevenue: 0,
+        riskScore,
+        healthScore: Math.max(0, 100 - riskScore),
+        primaryDrivers: ['Calculating live diagnostics on server...']
       };
-    })
-    .sort((a, b) => b.retailMarginPct - a.retailMarginPct);
+    });
 
-  // 4. Calculations: Which branch is underperforming?
-  const branchMetrics = branches.map(b => {
-    const branchStockCount = products.reduce((sum, p) => sum + (p.stocks[b.id] || 0), 0);
-    const branchLowStockCount = products.filter(p => (p.stocks[b.id] || 0) <= p.minStockLevel).length;
-    const branchDebtors = creditCustomers.filter(c => c.branchId === b.id);
-    const branchCreditTotal = branchDebtors.reduce((s, c) => s + c.totalOutstanding, 0);
-    const branchPlans = instalmentPlans.filter(p => p.branchId === b.id);
-    const branchOverduePlans = branchPlans.filter(p =>
-      p.schedules.some(s => s.status === 'overdue')
-    );
-    const branchSalesCount = sales.filter(s => s.branchId === b.id).length;
+  const underperformingBranchData =
+    backendAnalytics?.branches.underperformingBranch ??
+    [...branchDiagnostics].sort((a, b) => b.riskScore - a.riskScore)[0];
 
-    // Composite risk score: low stock issues + overdue ratios
-    const riskScore =
-      branchLowStockCount * 15 +
-      (branchOverduePlans.length / Math.max(1, branchPlans.length)) * 40 +
-      (branchCreditTotal > 100000 ? 20 : 0);
-
-    return {
-      branch: b,
-      stockCount: branchStockCount,
-      lowStockCount: branchLowStockCount,
-      creditTotal: branchCreditTotal,
-      activePlans: branchPlans.length,
-      overduePlans: branchOverduePlans.length,
-      salesCount: branchSalesCount,
-      riskScore
-    };
-  });
-
-  const underperformingBranchData = [...branchMetrics].sort((a, b) => b.riskScore - a.riskScore)[0];
-
-  // 5. Calculations: How much do I owe suppliers?
+  // 5. Server-Computed Supplier Debt & 7-Day Cheque Maturity Projection
   const totalSupplierDebt = suppliers.reduce((s, supp) => s + supp.totalOutstanding, 0);
   const supplierCheques = cheques.filter(c => c.type === 'issued');
-  const pendingSupplierCheques = supplierCheques.filter(c => c.status === 'pending');
-  const totalSupplierChequesOwed = pendingSupplierCheques.reduce((s, c) => s + c.amount, 0);
-  const totalSupplierOwed = totalSupplierDebt;
+  const pendingSupplierCheques = supplierCheques.filter(c => c.status === 'pending' || c.status === 'deposited');
+  const nextMaturingSupplierCheque = [...pendingSupplierCheques].sort((a, b) =>
+    a.maturityDate.localeCompare(b.maturityDate)
+  )[0];
+  const totalSupplierChequesOwed =
+    backendAnalytics?.chequeProjection.totalPendingOutflow ??
+    pendingSupplierCheques.reduce((s, c) => s + c.amount, 0);
+  const totalSupplierOwed = backendAnalytics?.liquidityAndAffordability.committedSupplierDebt ?? totalSupplierDebt;
 
-  // 6. Calculations: Can I afford to purchase another Rs. X million worth of stock?
-  const currentCashInDrawer = dailyDrawer.expectedClosingCash;
-  const estimatedBankCapital = 450000; // Liquid commercial bank float
-  const expectedPdcInflowsNext7Days = cheques
-    .filter(c => c.type === 'received' && c.status === 'pending')
-    .reduce((s, c) => s + c.amount, 0);
-  const expectedMonthlyCollections = 250000;
-
+  // 6. Server-Computed Liquidity & Stock Purchase Stress-Test
+  const liq = backendAnalytics?.liquidityAndAffordability;
+  const currentCashInDrawer = cashFlow?.currentCashInDrawer ?? dailyDrawer.expectedClosingCash;
+  const estimatedBankCapital = liq?.estimatedBankCapital ?? 450000;
+  const pendingReceivedPdcsRaw =
+    liq?.pendingReceivedPdcsRaw ??
+    cheques
+      .filter(c => c.type === 'received' && (c.status === 'pending' || c.status === 'deposited'))
+      .reduce((s, c) => s + c.amount, 0);
+  const riskAdjustedPdcInflows = liq?.riskAdjustedPdcInflows ?? Math.round(pendingReceivedPdcsRaw * 0.9);
+  const expectedMonthlyCollections = liq?.expectedMonthlyCollections ?? 250000;
   const totalLiquidAssets =
-    currentCashInDrawer + estimatedBankCapital + expectedPdcInflowsNext7Days + expectedMonthlyCollections;
-  const committedLiabilities = totalSupplierOwed;
-  const netSafeCapitalAvailable = Math.max(0, totalLiquidAssets - committedLiabilities);
+    liq?.totalLiquidAssets ??
+    currentCashInDrawer + estimatedBankCapital + riskAdjustedPdcInflows + expectedMonthlyCollections;
+  const committedLiabilities = liq?.committedLiabilities ?? totalSupplierOwed;
+  const netSafeCapitalAvailable =
+    liq?.netSafeCapitalAvailable ?? Math.max(0, totalLiquidAssets - committedLiabilities);
 
-  const purchaseDeficit = simulatedPurchaseAmount - netSafeCapitalAvailable;
-  const canAffordCash = purchaseDeficit <= 0;
-  const recommendedDownPayment = Math.round(simulatedPurchaseAmount * 0.25);
-  const balanceToNegotiatePdc = simulatedPurchaseAmount - recommendedDownPayment;
+  const purchaseDeficit = liq?.purchaseDeficit ?? simulatedPurchaseAmount - netSafeCapitalAvailable;
+  const canAffordCash = liq?.canAffordCash ?? purchaseDeficit <= 0;
+  const recommendedDownPayment = liq?.recommendedDownPayment ?? Math.round(simulatedPurchaseAmount * 0.25);
+  const balanceToNegotiatePdc = liq?.balanceToNegotiatePdc ?? simulatedPurchaseAmount - recommendedDownPayment;
+  const affordabilityVerdict = liq?.affordabilityVerdict;
 
   // Handle Ask Mudalali AI
   const handleAskCustom = async (questionText: string) => {
@@ -187,10 +229,11 @@ export const ExecutiveAdvisorView: React.FC = () => {
               name: p.name,
               marginPct: p.retailMarginPct.toFixed(1) + '%'
             })),
-            branchesSummary: branchMetrics.map(b => ({
-              name: b.branch.name,
+            branchesSummary: branchDiagnostics.map(b => ({
+              name: b.branchName,
               credit: b.creditTotal,
-              lowStock: b.lowStockCount
+              lowStock: b.lowStockCount,
+              healthScore: b.healthScore
             }))
           }
         })
@@ -272,15 +315,38 @@ export const ExecutiveAdvisorView: React.FC = () => {
       <div className="bg-gradient-to-r from-slate-900 via-slate-800 to-amber-950 text-white rounded-2xl p-4 sm:p-6 shadow-sm">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
-            <div className="flex items-center gap-1.5 text-amber-400 font-semibold text-xs tracking-wider uppercase mb-1">
-              <Sparkles className="w-3.5 h-3.5" />
-              <span>Mudalali Executive Intelligence Engine</span>
+            <div className="flex flex-wrap items-center gap-2 text-amber-400 font-semibold text-xs tracking-wider uppercase mb-1">
+              <span className="inline-flex items-center gap-1.5">
+                <Sparkles className="w-3.5 h-3.5" />
+                <span>Mudalali Executive Intelligence Engine</span>
+              </span>
+              <span className="text-slate-500">·</span>
+              <span className="text-[11px] font-mono normal-case text-slate-300">
+                Engine: {backendAnalytics?.engineVersion || 'Mudalali-CalcEngine/2.4.0'}
+              </span>
+              {currentUser && (
+                <>
+                  <span className="text-slate-500">·</span>
+                  <span className="text-[11px] normal-case text-amber-200">
+                    Profile: {currentUser.displayName}
+                  </span>
+                </>
+              )}
+              <button
+                type="button"
+                onClick={() => refreshBackendAnalytics()}
+                disabled={isAnalyticsSyncing}
+                className="ml-1 inline-flex items-center gap-1 px-2 py-0.5 rounded bg-white/10 hover:bg-white/20 text-[11px] normal-case font-semibold text-white transition-colors"
+              >
+                <RefreshCw className={`w-3 h-3 ${isAnalyticsSyncing ? 'animate-spin' : ''}`} />
+                <span>{isAnalyticsSyncing ? 'Computing...' : 'Recalculate'}</span>
+              </button>
             </div>
             <h1 className="text-xl sm:text-2xl font-black tracking-tight text-white">
               Instant SME Executive Queries
             </h1>
             <p className="text-xs text-slate-300 mt-1 max-w-2xl">
-              Tap any critical business question below for real-time mathematical calculations, debtor actions, profit margins, branch diagnostics, and purchasing affordability.
+              Tap any critical business question below for server-verified calculations, debtor risk scoring, profit margins, branch diagnostics, and purchasing affordability.
             </p>
           </div>
 
@@ -456,7 +522,7 @@ export const ExecutiveAdvisorView: React.FC = () => {
               <span>Senior Mudalali Assessment:</span>
             </div>
             <p className="leading-relaxed">
-              Your business has realized <strong>{formatLKR(totalActuallyCollected)}</strong> in hard cash and cleared deposits this month. After deducting daily petty shop expenses (tea, 3-wheel courier, packaging of <strong>{formatLKR(dailyDrawer.totalCashExpenses)}</strong>), your operational cash conversion rate stands strong at <strong>{((totalActuallyCollected / (totalActuallyCollected + 3050)) * 100).toFixed(1)}%</strong>.
+              Your business has realized <strong>{formatLKR(totalActuallyCollected)}</strong> in hard cash and cleared deposits this month. After deducting daily petty shop expenses (tea, 3-wheel courier, packaging of <strong>{formatLKR(pettyCashExpenses)}</strong>), your operational cash conversion rate stands at <strong>{cashConversionRatePct.toFixed(1)}%</strong>.
             </p>
           </div>
         </div>
@@ -483,49 +549,63 @@ export const ExecutiveAdvisorView: React.FC = () => {
                 Total Unpaid / Outstanding Owed:
               </div>
               <div className="text-2xl font-black text-rose-600 dark:text-rose-400 tabular-nums">
-                {formatLKR(
-                  unpaidCreditDebtors.reduce((s, c) => s + c.totalOutstanding, 0) +
-                    overdueInstalments.reduce((s, i) => s + i.schedule.amount, 0)
-                )}
+                {formatLKR(totalUnpaidReceivables)}
               </div>
             </div>
           </div>
 
-          {/* Section A: Credit Debtors (Naya Potha) */}
+          {/* Section A: Credit Debtors (Naya Potha) with Backend Risk Scoring */}
           <div>
             <h3 className="font-bold text-sm text-slate-900 dark:text-slate-100 mb-2 flex items-center justify-between">
-              <span>Naya Potha (ණය පොත) Debtors with Outstanding Balances</span>
-              <span className="text-xs text-slate-500 font-normal">{unpaidCreditDebtors.length} Debtors</span>
+              <span>Naya Potha (ණය පොත) Debtors — Algorithmic Risk Scoring</span>
+              <span className="text-xs text-slate-500 font-normal">
+                {(riskAssessments.length > 0 ? riskAssessments.length : unpaidCreditDebtors.length)} Debtors
+              </span>
             </h3>
 
             <div className="space-y-2">
               {unpaidCreditDebtors.map(debtor => {
                 const branchName = branches.find(b => b.id === debtor.branchId)?.name.split(' ')[0];
+                const risk = riskAssessments.find(r => r.customerId === debtor.id);
+                const riskTier = risk?.riskTier ?? (debtor.creditScoreTrust === 'Watchlist' ? 'Critical' : 'Low');
+                const riskColor =
+                  riskTier === 'Critical'
+                    ? 'text-rose-700 dark:text-rose-300 bg-rose-100 dark:bg-rose-950/60'
+                    : riskTier === 'Elevated'
+                    ? 'text-amber-800 dark:text-amber-300 bg-amber-100 dark:bg-amber-950/60'
+                    : 'text-emerald-700 dark:text-emerald-300 bg-emerald-100 dark:bg-emerald-950/60';
 
                 return (
                   <div
                     key={debtor.id}
-                    className="p-3.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex flex-col sm:flex-row sm:items-center justify-between gap-3 hover:border-slate-300"
+                    className="p-3.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex flex-col sm:flex-row sm:items-center justify-between gap-3 hover:border-slate-300 dark:hover:border-slate-700"
                   >
                     <div>
-                      <div className="flex items-center gap-2">
+                      <div className="flex flex-wrap items-center gap-2">
                         <span className="font-bold text-sm text-slate-900 dark:text-slate-100">
                           {debtor.name}
                         </span>
-                        {debtor.creditScoreTrust === 'Watchlist' && (
-                          <span className="text-[10px] bg-rose-100 text-rose-800 font-bold px-1.5 py-0.5 rounded">
-                            Watchlist / Overdue
-                          </span>
-                        )}
+                        <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded font-mono ${riskColor}`}>
+                          {risk ? `Risk ${risk.riskScore}/100 · ${riskTier}` : debtor.creditScoreTrust}
+                        </span>
                         <span className="text-[11px] text-slate-400">({branchName} Branch)</span>
                       </div>
-                      <div className="text-xs text-slate-500 mt-0.5 flex items-center gap-2">
+                      <div className="text-xs text-slate-500 mt-0.5 flex flex-wrap items-center gap-2">
                         <span className="font-mono">{debtor.phone}</span>
                         <span>·</span>
                         <span>NIC: {debtor.nicNumber}</span>
                         <span>·</span>
-                        <span>Last paid: {debtor.lastPaymentDate || 'Never'}</span>
+                        <span>
+                          {risk
+                            ? `Util: ${risk.utilizationPct}% · ${risk.daysSinceLastPayment}d since payment`
+                            : `Last paid: ${debtor.lastPaymentDate || 'Never'}`}
+                        </span>
                       </div>
+                      {risk?.recommendedAction && (
+                        <div className="text-[11px] text-slate-600 dark:text-slate-300 mt-1">
+                          Action: <span className="font-semibold">{risk.recommendedAction}</span>
+                        </div>
+                      )}
                     </div>
 
                     <div className="flex items-center justify-between sm:justify-end gap-3 shrink-0 pt-2 sm:pt-0 border-t sm:border-t-0 border-slate-100 dark:border-slate-800">
@@ -663,7 +743,7 @@ export const ExecutiveAdvisorView: React.FC = () => {
                   <th className="py-2.5 px-3 text-right">Retail Price</th>
                   <th className="py-2.5 px-3 text-right">Profit / Unit</th>
                   <th className="py-2.5 px-3 text-center">Retail Margin %</th>
-                  <th className="py-2.5 px-3 text-right">Stock Value</th>
+                  <th className="py-2.5 px-3 text-right">Stock Value & Reorder</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
@@ -671,7 +751,7 @@ export const ExecutiveAdvisorView: React.FC = () => {
                   <tr key={prod.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/40">
                     <td className="py-3 px-3">
                       <div className="flex items-center gap-2">
-                        <span className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold ${
+                        <span className={`w-5 h-5 rounded-md flex items-center justify-center text-[10px] font-bold ${
                           idx === 0 ? 'bg-amber-500 text-slate-950' : idx === 1 ? 'bg-slate-300 text-slate-800' : idx === 2 ? 'bg-amber-700 text-white' : 'text-slate-400'
                         }`}>
                           {idx + 1}
@@ -703,14 +783,19 @@ export const ExecutiveAdvisorView: React.FC = () => {
                           ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300'
                           : prod.retailMarginPct >= 18
                           ? 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300'
-                          : 'bg-slate-100 text-slate-700'
+                          : 'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300'
                       }`}>
                         {prod.retailMarginPct.toFixed(1)}%
                       </span>
                     </td>
 
                     <td className="py-3 px-3 text-right font-mono font-medium text-slate-700 dark:text-slate-300 tabular-nums">
-                      {formatLKR(prod.potentialProfit)} profit
+                      <div>{formatLKR(prod.potentialProfit)} profit</div>
+                      {prod.suggestedReorderUnits > 0 && (
+                        <div className="text-[10px] text-amber-600 dark:text-amber-400">
+                          Reorder +{prod.suggestedReorderUnits} {prod.unit}
+                        </div>
+                      )}
                     </td>
                   </tr>
                 ))}
@@ -719,9 +804,25 @@ export const ExecutiveAdvisorView: React.FC = () => {
           </div>
 
           <div className="p-3 bg-amber-50/50 dark:bg-amber-950/20 rounded-xl border border-amber-200/50 text-xs text-amber-900 dark:text-amber-200 space-y-1">
-            <span className="font-bold">Mudalali Commercial Strategy:</span>
+            <span className="font-bold">Algorithmic Margin & Inventory Strategy:</span>
             <p className="text-[11px] leading-relaxed">
-              Items like <strong>Batik Sarongs (31.6%)</strong>, <strong>Bajaj Spares (28.3%)</strong>, and <strong>Kelani Wiring (20.2%)</strong> are your highest margin profit drivers. While Groceries (Dhal & Milk Powder) have thin 10-13% margins, they drive foot traffic into your shops. Recommend bundling electrical appliances with high-margin Orange switches!
+              Your top margin drivers right now are{' '}
+              {marginRankedProducts.slice(0, 3).map((p, i) => (
+                <React.Fragment key={p.id}>
+                  <strong>
+                    {p.name} ({p.retailMarginPct.toFixed(1)}%)
+                  </strong>
+                  {i < 2 ? (i === 0 ? ', ' : ', and ') : ''}
+                </React.Fragment>
+              ))}
+              . Portfolio average gross margin is{' '}
+              <strong>{(backendAnalytics?.marginsAndInventory.averageGrossMarginPct ?? 18.5).toFixed(1)}%</strong>
+              {backendAnalytics && backendAnalytics.marginsAndInventory.lowStockSkuCount > 0 && (
+                <>
+                  {' '}with <strong>{backendAnalytics.marginsAndInventory.lowStockSkuCount} SKUs</strong> flagged for reorder (est. budget{' '}
+                  <strong>{formatLKR(backendAnalytics.marginsAndInventory.totalSuggestedReorderCost)}</strong>).
+                </>
+              )}
             </p>
           </div>
         </div>
@@ -745,32 +846,37 @@ export const ExecutiveAdvisorView: React.FC = () => {
 
             <div className="p-3 bg-orange-50 dark:bg-orange-950/40 rounded-xl border border-orange-200 dark:border-orange-900 text-left sm:text-right">
               <div className="text-xs font-semibold text-orange-800 dark:text-orange-300">
-                Flagged Underperformer:
+                Flagged Underperformer · Health {underperformingBranchData?.healthScore ?? 0}/100
               </div>
               <div className="text-lg font-black text-orange-900 dark:text-orange-100">
-                {underperformingBranchData?.branch.name}
+                {underperformingBranchData?.branchName}
               </div>
               <div className="text-xs text-orange-700 dark:text-orange-400 font-bold">
-                Manager: {underperformingBranchData?.branch.manager}
+                Manager: {underperformingBranchData?.manager}
               </div>
             </div>
           </div>
 
           {/* Underperforming Root Cause Analysis */}
           <div className="p-4 bg-orange-50/40 dark:bg-orange-950/20 rounded-2xl border border-orange-200/60 dark:border-orange-900/40 space-y-3">
-            <h3 className="font-bold text-sm text-orange-950 dark:text-orange-100 flex items-center gap-1.5">
-              <AlertTriangle className="w-4 h-4 text-orange-600" />
-              <span>Root Cause Analysis for {underperformingBranchData?.branch.name}:</span>
+            <h3 className="font-bold text-sm text-orange-950 dark:text-orange-100 flex items-center justify-between gap-2">
+              <span className="flex items-center gap-1.5">
+                <AlertTriangle className="w-4 h-4 text-orange-600" />
+                <span>Root Cause Analysis for {underperformingBranchData?.branchName}:</span>
+              </span>
+              <span className="text-xs font-mono text-orange-700 dark:text-orange-300">
+                Risk Score: {underperformingBranchData?.riskScore ?? 0}/100
+              </span>
             </h3>
 
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
               <div className="p-3 bg-white dark:bg-slate-900 rounded-xl border border-orange-200/40">
                 <div className="text-slate-500">1. Stock Depletion</div>
                 <div className="text-base font-bold text-rose-600 tabular-nums mt-0.5">
-                  {underperformingBranchData?.lowStockCount} Critical SKUs Depleted
+                  {underperformingBranchData?.lowStockCount ?? 0} Critical SKUs Depleted
                 </div>
                 <div className="text-[11px] text-slate-500 mt-1">
-                  Washing machines & LED TVs at zero or near-zero count, losing walk-in customers.
+                  {underperformingBranchData?.outOfStockCount ?? 0} SKU(s) completely out of stock in this branch.
                 </div>
               </div>
 
@@ -780,20 +886,33 @@ export const ExecutiveAdvisorView: React.FC = () => {
                   {formatLKR(underperformingBranchData?.creditTotal || 0)} Trapped in Credit
                 </div>
                 <div className="text-[11px] text-slate-500 mt-1">
-                  Samantha Perera owes Rs. 68,400 with a returned cheque on file.
+                  {underperformingBranchData?.returnedChequesCount ?? 0} returned/bounced cheque(s) recorded at branch.
                 </div>
               </div>
 
               <div className="p-3 bg-white dark:bg-slate-900 rounded-xl border border-orange-200/40">
                 <div className="text-slate-500">3. Hire Purchase Arrears</div>
                 <div className="text-base font-bold text-rose-600 tabular-nums mt-0.5">
-                  {underperformingBranchData?.overduePlans} Overdue Contracts
+                  {underperformingBranchData?.overduePlans ?? 0} Overdue Contracts
                 </div>
                 <div className="text-[11px] text-slate-500 mt-1">
-                  Malini Jayawardena (Rs. 12,000 instalment) delayed collection.
+                  {formatLKR(underperformingBranchData?.overdueInstalmentAmount || 0)} in past-due Wara instalments.
                 </div>
               </div>
             </div>
+
+            {underperformingBranchData?.primaryDrivers && underperformingBranchData.primaryDrivers.length > 0 && (
+              <div className="space-y-1 pt-1">
+                <div className="text-[11px] font-bold text-orange-900 dark:text-orange-200">
+                  Server-Computed Primary Diagnostic Drivers:
+                </div>
+                <ul className="text-xs text-slate-700 dark:text-slate-300 space-y-0.5 list-disc list-inside">
+                  {underperformingBranchData.primaryDrivers.map((driver, i) => (
+                    <li key={i}>{driver}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
 
             <div className="flex items-center gap-2 pt-2">
               <button
@@ -801,7 +920,7 @@ export const ExecutiveAdvisorView: React.FC = () => {
                 className="px-3.5 py-2 bg-sky-600 hover:bg-sky-500 text-white rounded-xl text-xs font-bold shadow-xs flex items-center gap-1.5"
               >
                 <Boxes className="w-3.5 h-3.5" />
-                <span>Dispatch Stock from Pettah to {underperformingBranchData?.branch.name.split(' ')[0]}</span>
+                <span>Dispatch Stock from Pettah to {underperformingBranchData?.branchName.split(' ')[0]}</span>
               </button>
             </div>
           </div>
@@ -812,19 +931,26 @@ export const ExecutiveAdvisorView: React.FC = () => {
               All Sri Lanka Branches Comparative Scorecard:
             </h4>
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-              {branchMetrics.map(bm => (
+              {branchDiagnostics.map(bm => (
                 <div
-                  key={bm.branch.id}
+                  key={bm.branchId}
                   className={`p-3.5 rounded-xl border text-xs ${
-                    bm.branch.id === underperformingBranchData?.branch.id
+                    bm.branchId === underperformingBranchData?.branchId
                       ? 'border-orange-400 bg-orange-50/20 dark:bg-orange-950/20'
                       : 'border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900'
                   }`}
                 >
-                  <div className="font-bold text-sm text-slate-900 dark:text-slate-100">
-                    {bm.branch.name}
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="font-bold text-sm text-slate-900 dark:text-slate-100">
+                      {bm.branchName}
+                    </div>
+                    <span className={`text-[11px] font-mono font-bold ${
+                      bm.healthScore >= 75 ? 'text-emerald-600' : bm.healthScore >= 50 ? 'text-amber-600' : 'text-rose-600'
+                    }`}>
+                      {bm.healthScore}/100
+                    </span>
                   </div>
-                  <div className="text-[11px] text-slate-500">{bm.branch.address}</div>
+                  <div className="text-[11px] text-slate-500">{bm.address}</div>
 
                   <div className="mt-3 space-y-1.5 pt-2 border-t border-slate-100 dark:border-slate-800">
                     <div className="flex justify-between">
@@ -980,10 +1106,29 @@ export const ExecutiveAdvisorView: React.FC = () => {
           {/* Clearing safety check */}
           <div className="p-4 bg-slate-50 dark:bg-slate-800/40 rounded-xl border border-slate-200 dark:border-slate-700 text-xs space-y-1.5">
             <span className="font-bold text-slate-900 dark:text-slate-100">
-              Commercial Bank Account Clearing Check:
+              Commercial Bank Account Clearing & 7-Day Liquidity Check:
             </span>
             <p className="text-slate-600 dark:text-slate-300 leading-relaxed">
-              Your <strong>Rs. {totalSupplierChequesOwed.toLocaleString()}</strong> cheque issued to Hayleys Consumer Products Ltd will be presented for clearing on <strong>10th Nov</strong>. Ensure your Bank of Ceylon / Commercial Bank checking balance has at least <strong>Rs. 320,000</strong> by 9:00 AM on clearing morning to avoid a return fee of Rs. 1,500 and loss of distributor credit terms!
+              {nextMaturingSupplierCheque ? (
+                <>
+                  Total pending supplier PDC exposure is <strong>{formatLKR(totalSupplierChequesOwed)}</strong>. Next maturing cheque is{' '}
+                  <strong>{formatLKR(nextMaturingSupplierCheque.amount)}</strong> issued to{' '}
+                  <strong>{nextMaturingSupplierCheque.partyName}</strong> on <strong>{nextMaturingSupplierCheque.maturityDate}</strong>.{' '}
+                </>
+              ) : (
+                <>No pending supplier PDCs require immediate clearing. </>
+              )}
+              {backendAnalytics && (
+                <>
+                  Projected 7-day net cheque flow is{' '}
+                  <strong className={backendAnalytics.chequeProjection.net7DayChequeFlow >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}>
+                    {backendAnalytics.chequeProjection.net7DayChequeFlow >= 0 ? '+' : ''}
+                    {formatLKR(backendAnalytics.chequeProjection.net7DayChequeFlow)}
+                  </strong>{' '}
+                  ({formatLKR(backendAnalytics.chequeProjection.maturing7DaysInflow)} inflow vs{' '}
+                  {formatLKR(backendAnalytics.chequeProjection.maturing7DaysOutflow)} outflow).
+                </>
+              )}
             </p>
           </div>
         </div>
@@ -1074,9 +1219,9 @@ export const ExecutiveAdvisorView: React.FC = () => {
                   </span>
                 </div>
                 <div className="flex justify-between">
-                  <span>Customer PDCs Maturing (7-14 Days):</span>
+                  <span>Risk-Adjusted Customer PDCs:</span>
                   <span className="font-bold text-slate-800 dark:text-slate-200 tabular-nums">
-                    +{formatLKR(expectedPdcInflowsNext7Days)}
+                    +{formatLKR(riskAdjustedPdcInflows)}
                   </span>
                 </div>
                 <div className="flex justify-between">
@@ -1091,12 +1236,12 @@ export const ExecutiveAdvisorView: React.FC = () => {
             {/* Column 2: Liabilities & Net Safe Capital */}
             <div className="p-4 bg-slate-50 dark:bg-slate-800/30 rounded-xl border border-slate-200 dark:border-slate-700 space-y-2">
               <h4 className="font-bold text-slate-900 dark:text-slate-100 flex items-center justify-between pb-1 border-b border-slate-200 dark:border-slate-700">
-                <span>Committed Supplier Cheques</span>
+                <span>Committed Supplier Liabilities</span>
                 <span className="text-rose-600 tabular-nums font-mono">-{formatLKR(committedLiabilities)}</span>
               </h4>
               <div className="space-y-1.5 text-slate-600 dark:text-slate-400">
                 <div className="flex justify-between">
-                  <span>Issued Hayleys / Importer PDCs:</span>
+                  <span>Supplier Payables & Issued PDCs:</span>
                   <span className="font-bold text-rose-600 tabular-nums">-{formatLKR(totalSupplierOwed)}</span>
                 </div>
                 <div className="pt-2 border-t border-slate-200 dark:border-slate-700 flex justify-between font-bold text-slate-900 dark:text-slate-100">
@@ -1119,34 +1264,48 @@ export const ExecutiveAdvisorView: React.FC = () => {
           <div className="p-4 bg-indigo-50/50 dark:bg-indigo-950/30 rounded-2xl border border-indigo-200 dark:border-indigo-900/60 space-y-2.5 text-xs text-indigo-950 dark:text-indigo-100">
             <h4 className="font-bold text-sm flex items-center gap-1.5 text-indigo-900 dark:text-indigo-200">
               <Sparkles className="w-4 h-4 text-indigo-600" />
-              <span>Recommended Sri Lankan SME Procurement Plan for Rs. {simulatedPurchaseAmount.toLocaleString()}:</span>
+              <span>Algorithmic SME Procurement Plan for {formatLKR(simulatedPurchaseAmount)}:</span>
             </h4>
+
+            {affordabilityVerdict && (
+              <div className="p-2.5 rounded-lg bg-white/70 dark:bg-slate-900/60 border border-indigo-200/70 dark:border-indigo-800/70 font-semibold text-indigo-900 dark:text-indigo-200">
+                {affordabilityVerdict}
+              </div>
+            )}
 
             <div className="space-y-2 leading-relaxed">
               <div className="flex items-start gap-2">
-                <div className="w-5 h-5 rounded-full bg-indigo-600 text-white font-bold text-[10px] flex items-center justify-center shrink-0 mt-0.5">
+                <div className="w-5 h-5 rounded-md bg-indigo-600 text-white font-bold text-[10px] flex items-center justify-center shrink-0 mt-0.5">
                   1
                 </div>
                 <div>
-                  <strong>Do NOT pay full Rs. {simulatedPurchaseAmount.toLocaleString()} upfront in cash:</strong> Doing so would immediately deplete your working cash drawer ({formatLKR(currentCashInDrawer)}) and leave insufficient funds for the Rs. 320,000 supplier cheque clearing on 10th Nov.
+                  {canAffordCash ? (
+                    <>
+                      <strong>Cash Capacity Verified:</strong> Net safe working capital ({formatLKR(netSafeCapitalAvailable)}) covers {formatLKR(simulatedPurchaseAmount)} while reserving funds for supplier commitments ({formatLKR(committedLiabilities)}).
+                    </>
+                  ) : (
+                    <>
+                      <strong>Do NOT pay full {formatLKR(simulatedPurchaseAmount)} upfront in cash:</strong> Doing so leaves a cash gap of {formatLKR(purchaseDeficit)} and threatens pending supplier cheque clearing ({formatLKR(totalSupplierChequesOwed)}).
+                    </>
+                  )}
                 </div>
               </div>
 
               <div className="flex items-start gap-2">
-                <div className="w-5 h-5 rounded-full bg-indigo-600 text-white font-bold text-[10px] flex items-center justify-center shrink-0 mt-0.5">
+                <div className="w-5 h-5 rounded-md bg-indigo-600 text-white font-bold text-[10px] flex items-center justify-center shrink-0 mt-0.5">
                   2
                 </div>
                 <div>
-                  <strong>Execute 25% Advance Down Payment ({formatLKR(recommendedDownPayment)}):</strong> Pay 25% from current drawer and bank balance to seal the consignment pricing.
+                  <strong>Execute 25% Advance Down Payment ({formatLKR(recommendedDownPayment)}):</strong> Pay 25% from current drawer ({formatLKR(currentCashInDrawer)}) and bank balance to lock wholesale pricing.
                 </div>
               </div>
 
               <div className="flex items-start gap-2">
-                <div className="w-5 h-5 rounded-full bg-indigo-600 text-white font-bold text-[10px] flex items-center justify-center shrink-0 mt-0.5">
+                <div className="w-5 h-5 rounded-md bg-indigo-600 text-white font-bold text-[10px] flex items-center justify-center shrink-0 mt-0.5">
                   3
                 </div>
                 <div>
-                  <strong>Issue 30-Day Post-Dated Cheque for Balance ({formatLKR(balanceToNegotiatePdc)}):</strong> Negotiate standard 30-day PDC terms with your importer/supplier. By the time the cheque matures in 30 days, your incoming customer PDCs and overdue recoveries from Bandara & Sons and Rizwan Stores will easily yield over Rs. 400,000+.
+                  <strong>Issue 30-Day Post-Dated Cheque for Balance ({formatLKR(balanceToNegotiatePdc)}):</strong> Negotiate 30-day PDC terms aligned with your risk-adjusted PDC inflows ({formatLKR(riskAdjustedPdcInflows)}) and credit collections ({formatLKR(expectedMonthlyCollections)}).
                 </div>
               </div>
             </div>

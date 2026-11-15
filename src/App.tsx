@@ -20,6 +20,7 @@ import { DailyDrawerModal } from './components/DailyDrawerModal';
 import { InterBranchTransferModal } from './components/InterBranchTransferModal';
 import { SmartAssistantModal } from './components/SmartAssistantModal';
 import { BootScreen } from './components/BootScreen';
+import { ProfileLoginScreen } from './components/ProfileLoginScreen';
 import { Smartphone, Monitor } from 'lucide-react';
 
 const MainContent: React.FC = () => {
@@ -76,8 +77,9 @@ const MainContent: React.FC = () => {
         </main>
       </div>
 
-      {/* Global Modals & Boot Screen */}
+      {/* Global Modals, Boot & Login Profiles */}
       <BootScreen />
+      <ProfileLoginScreen />
       <ReceiptModal />
       <DailyDrawerModal />
       <InterBranchTransferModal />

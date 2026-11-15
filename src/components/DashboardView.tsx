@@ -16,7 +16,11 @@ import {
   MessageCircle,
   ExternalLink,
   Plus,
-  Sparkles
+  Sparkles,
+  Calculator,
+  Crown,
+  Scale,
+  FileSpreadsheet
 } from 'lucide-react';
 import { BranchId } from '../types';
 import { MudalaliLogo } from './MudalaliLogo';
@@ -30,13 +34,15 @@ export const DashboardView: React.FC = () => {
     creditCustomers,
     instalmentPlans,
     cheques,
-    sales,
     dailyDrawer,
     setActiveTab,
     setIsDailyDrawerOpen,
     setIsTransferModalOpen,
     language,
-    showToast
+    showToast,
+    currentUser,
+    setIsLoginScreenOpen,
+    backendAnalytics
   } = useApp();
 
   // WhatsApp reminder modal state
@@ -57,7 +63,6 @@ export const DashboardView: React.FC = () => {
   const filteredCredit = creditCustomers.filter(c => branchFilter(c.branchId));
   const filteredInstalments = instalmentPlans.filter(p => branchFilter(p.branchId));
   const filteredCheques = cheques.filter(chq => branchFilter(chq.branchId));
-  const filteredSales = sales.filter(s => branchFilter(s.branchId));
 
   const totalOutstandingCredit = filteredCredit.reduce((sum, c) => sum + c.totalOutstanding, 0);
 
@@ -114,27 +119,47 @@ export const DashboardView: React.FC = () => {
                     OS
                   </span>
                 </span>
-                <span className="px-2 py-0.5 rounded-full bg-amber-500/15 border border-amber-400/30 text-amber-400 text-[10px] font-bold">
-                  v2.4 Enterprise
+                <span className="text-[11px] font-bold text-amber-400">
+                  · {activeBranchName}
                 </span>
-                <div className="hidden sm:flex text-xs uppercase tracking-wider text-amber-400 font-semibold items-center gap-1 bg-slate-900/80 px-2.5 py-0.5 rounded-lg border border-slate-800">
-                  <Building2 className="w-3 h-3 text-amber-400" />
-                  <span>{activeBranchName}</span>
-                </div>
+                <button
+                  onClick={() => setIsLoginScreenOpen(true)}
+                  className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-[10px] font-bold border transition-colors cursor-pointer ${
+                    currentUser?.role === 'accountant'
+                      ? 'bg-sky-500/20 border-sky-400/40 text-sky-300 hover:bg-sky-500/30'
+                      : 'bg-amber-500/20 border-amber-400/40 text-amber-300 hover:bg-amber-500/30'
+                  }`}
+                  title="Switch between Accountant & Mudalali profiles"
+                >
+                  {currentUser?.role === 'accountant' ? (
+                    <Calculator className="w-3 h-3" />
+                  ) : (
+                    <Crown className="w-3 h-3" />
+                  )}
+                  <span>{currentUser?.displayName || 'Mudalali'}</span>
+                </button>
               </div>
 
               <h1 className="text-sm sm:text-base font-bold text-slate-200 mt-1.5 flex items-center gap-2">
                 <span>
-                  {language === 'si'
-                    ? 'ව්‍යාපාර මෙහෙයුම් පුවරුව (Command Center)'
+                  {currentUser?.role === 'accountant'
+                    ? language === 'si'
+                      ? 'ගණකාධිකාරී ගිණුම් හා විගණන පුවරුව'
+                      : language === 'ta'
+                      ? 'கணக்காளர் தணிக்கை & கணக்கு மையம்'
+                      : 'Accountant Ledger & Audit Desk'
+                    : language === 'si'
+                    ? 'මුදලාලි ව්‍යාපාර මෙහෙයුම් පුවරුව'
                     : language === 'ta'
-                    ? 'வணிக கட்டுப்பாட்டு மையம் (Command Center)'
+                    ? 'முதலாளி வணிக கட்டுப்பாட்டு மையம்'
                     : "Mudalali's Command Center"}
                 </span>
               </h1>
 
               <p className="text-xs text-slate-400 mt-0.5 max-w-xl">
-                {language === 'si'
+                {currentUser?.role === 'accountant'
+                  ? 'Working capital balance, VAT liability estimates, 7-day PDC clearing schedule & drawer variance audit.'
+                  : language === 'si'
                   ? 'දෛනික මුදල්, ණය පොත, වාරික එකතු කිරීම් සහ ශාඛා තොග තත්‍ය කාලීනව කළමනාකරණය'
                   : language === 'ta'
                   ? 'பணப்புழக்கம், கடன் வாடிக்கையாளர் புத்தகம், தவணை வசூல் மற்றும் பல கிளை இருப்பு'
@@ -145,7 +170,7 @@ export const DashboardView: React.FC = () => {
 
           {/* Quick Actions: Branch Selection & Open POS */}
           <div className="flex items-center gap-2 self-start lg:self-auto flex-wrap">
-            {/* Branch Selection Dropdown (placed where the boot animation button was located) */}
+            {/* Branch Selection Dropdown */}
             <div className="flex items-center gap-1.5 bg-slate-900/90 hover:bg-slate-800/90 border border-slate-700/80 rounded-xl px-3 py-2 text-xs font-semibold text-white shadow-xs transition-colors cursor-pointer group">
               <Building2 className="w-3.5 h-3.5 text-amber-400 shrink-0" />
               <select
@@ -184,6 +209,127 @@ export const DashboardView: React.FC = () => {
           </div>
         </div>
       </div>
+
+      {/* Role-Specific Backend Analytics Engine Card (Accountant vs Mudalali) */}
+      {backendAnalytics && (
+        <div className="bg-white dark:bg-slate-900 rounded-2xl p-4 sm:p-5 border border-slate-200 dark:border-slate-800 shadow-2xs space-y-3">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <div
+                className={`w-7 h-7 rounded-lg flex items-center justify-center ${
+                  currentUser?.role === 'accountant'
+                    ? 'bg-sky-500/10 text-sky-600 dark:text-sky-400'
+                    : 'bg-amber-500/10 text-amber-600 dark:text-amber-400'
+                }`}
+              >
+                {currentUser?.role === 'accountant' ? (
+                  <FileSpreadsheet className="w-4 h-4" />
+                ) : (
+                  <Scale className="w-4 h-4" />
+                )}
+              </div>
+              <div>
+                <h2 className="text-xs sm:text-sm font-bold text-slate-900 dark:text-slate-100">
+                  {currentUser?.role === 'accountant'
+                    ? 'Accountant Trial Balance & Liquidity Audit (Backend Engine)'
+                    : 'Mudalali Executive Solvency & Margin Snapshot (Backend Engine)'}
+                </h2>
+                <div className="text-[11px] text-slate-500 dark:text-slate-400">
+                  <span>{backendAnalytics.engineVersion}</span>
+                  <span className="mx-1.5" aria-hidden="true">·</span>
+                  <span>Audit: {backendAnalytics.accountingLedgerSummary.auditStatus}</span>
+                </div>
+              </div>
+            </div>
+
+            <button
+              onClick={() => setActiveTab('advisor')}
+              className="text-xs font-bold text-amber-600 dark:text-amber-400 hover:underline flex items-center gap-1 self-start sm:self-auto cursor-pointer"
+            >
+              <span>Full Algorithm Report</span>
+              <ArrowRight className="w-3 h-3" />
+            </button>
+          </div>
+
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 text-xs">
+            <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700">
+              <div className="text-slate-500 dark:text-slate-400 font-medium">
+                {currentUser?.role === 'accountant' ? 'Net Working Capital' : 'Safe Liquidity Buffer'}
+              </div>
+              <div className="text-base sm:text-lg font-extrabold text-slate-900 dark:text-slate-100 tabular-nums mt-0.5">
+                {formatLKR(
+                  currentUser?.role === 'accountant'
+                    ? backendAnalytics.accountingLedgerSummary.netWorkingCapital
+                    : backendAnalytics.liquidityAndAffordability.netSafeCapitalAvailable
+                )}
+              </div>
+              <div className="text-[11px] text-emerald-600 dark:text-emerald-400 mt-0.5 font-semibold">
+                {currentUser?.role === 'accountant'
+                  ? `Assets ${formatLKR(backendAnalytics.accountingLedgerSummary.totalCurrentAssets)}`
+                  : `Cash Conversion ${backendAnalytics.cashFlow.cashConversionRatePct}%`}
+              </div>
+            </div>
+
+            <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700">
+              <div className="text-slate-500 dark:text-slate-400 font-medium">
+                {currentUser?.role === 'accountant' ? 'Total Liabilities (AP + PDC)' : 'Stock Valuation (Cost)'}
+              </div>
+              <div className="text-base sm:text-lg font-extrabold text-slate-900 dark:text-slate-100 tabular-nums mt-0.5">
+                {formatLKR(
+                  currentUser?.role === 'accountant'
+                    ? backendAnalytics.accountingLedgerSummary.totalCurrentLiabilities
+                    : backendAnalytics.marginsAndInventory.totalInventoryCostValue
+                )}
+              </div>
+              <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
+                {currentUser?.role === 'accountant'
+                  ? `Debt-to-Asset: ${backendAnalytics.accountingLedgerSummary.debtToAssetRatioPct}%`
+                  : `Avg Gross Margin: ${backendAnalytics.marginsAndInventory.averageGrossMarginPct}%`}
+              </div>
+            </div>
+
+            <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700">
+              <div className="text-slate-500 dark:text-slate-400 font-medium">
+                {currentUser?.role === 'accountant' ? 'Est. 18% VAT Provision' : '7-Day Net PDC Flow'}
+              </div>
+              <div
+                className={`text-base sm:text-lg font-extrabold tabular-nums mt-0.5 ${
+                  currentUser?.role !== 'accountant' && backendAnalytics.chequeProjection.net7DayChequeFlow < 0
+                    ? 'text-rose-600 dark:text-rose-400'
+                    : 'text-slate-900 dark:text-slate-100'
+                }`}
+              >
+                {formatLKR(
+                  currentUser?.role === 'accountant'
+                    ? backendAnalytics.accountingLedgerSummary.estimatedVatLiability
+                    : backendAnalytics.chequeProjection.net7DayChequeFlow
+                )}
+              </div>
+              <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
+                {currentUser?.role === 'accountant'
+                  ? `Drawer Variance: ${formatLKR(backendAnalytics.accountingLedgerSummary.drawerVariance)}`
+                  : `In ${formatLKR(backendAnalytics.chequeProjection.maturing7DaysInflow)} · Out ${formatLKR(backendAnalytics.chequeProjection.maturing7DaysOutflow)}`}
+              </div>
+            </div>
+
+            <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700">
+              <div className="text-slate-500 dark:text-slate-400 font-medium">
+                {currentUser?.role === 'accountant' ? 'Reorder Budget Needed' : 'Flagged Branch Risk'}
+              </div>
+              <div className="text-base sm:text-lg font-extrabold text-amber-600 dark:text-amber-400 tabular-nums mt-0.5 truncate">
+                {currentUser?.role === 'accountant'
+                  ? formatLKR(backendAnalytics.marginsAndInventory.totalSuggestedReorderCost)
+                  : backendAnalytics.branches.underperformingBranch?.branchName.split(' ')[0] || 'Healthy'}
+              </div>
+              <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5 truncate">
+                {currentUser?.role === 'accountant'
+                  ? `${backendAnalytics.marginsAndInventory.lowStockSkuCount} SKUs below safety stock`
+                  : `Health Score: ${backendAnalytics.branches.underperformingBranch?.healthScore ?? 100}/100`}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* 6 Core Executive Questions Bar */}
       <div className="bg-white dark:bg-slate-900 rounded-2xl p-4 border border-slate-200 dark:border-slate-800 shadow-2xs">

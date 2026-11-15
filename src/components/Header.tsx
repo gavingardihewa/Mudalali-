@@ -1,7 +1,7 @@
 import React from 'react';
 import { useApp } from '../context/AppContext';
 import { BranchId, Language } from '../types';
-import { Building2, Wallet, Sparkles, RefreshCw, Sun, Moon } from 'lucide-react';
+import { Building2, Wallet, Sparkles, Sun, Moon, Calculator, Crown } from 'lucide-react';
 import { formatLKR } from '../utils/formatters';
 import { MudalaliLogo } from './MudalaliLogo';
 
@@ -16,12 +16,11 @@ export const Header: React.FC = () => {
     toggleTheme,
     dailyDrawer,
     setIsDailyDrawerOpen,
-    setIsAssistantModalOpen,
     activeTab,
-    setActiveTab
+    setActiveTab,
+    currentUser,
+    setIsLoginScreenOpen
   } = useApp();
-
-  const currentBranch = branches.find(b => b.id === currentBranchId);
 
   return (
     <header className="sticky top-0 z-30 w-full bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-b border-slate-200 dark:border-slate-800">
@@ -35,7 +34,7 @@ export const Header: React.FC = () => {
           className="shrink-0 cursor-pointer"
         />
 
-        {/* Zone 2: Branch selector & Language Switcher (tablet/desktop) & Quick Theme Toggle */}
+        {/* Zone 2: Branch selector, Language Switcher, Theme Toggle & Profile Switcher */}
         <div className="flex items-center gap-1 sm:gap-2 shrink-0">
           {/* Branch Switcher (hidden on mobile phones, available in home dashboard and More menu) */}
           <div className="hidden sm:flex items-center gap-1 sm:gap-1.5 bg-slate-100 dark:bg-slate-800 rounded-lg px-2 py-1 sm:px-2.5 sm:py-1.5 border border-slate-200 dark:border-slate-700">
@@ -43,7 +42,7 @@ export const Header: React.FC = () => {
             <select
               value={currentBranchId}
               onChange={e => setCurrentBranchId(e.target.value as 'all' | BranchId)}
-              className="bg-transparent text-[11px] sm:text-xs font-semibold text-slate-800 dark:text-slate-200 focus:outline-none cursor-pointer truncate max-w-[90px] sm:max-w-[150px] md:max-w-[180px]"
+              className="bg-transparent text-[11px] sm:text-xs font-semibold text-slate-800 dark:text-slate-200 focus:outline-none cursor-pointer truncate max-w-[90px] sm:max-w-[140px] md:max-w-[170px]"
             >
               <option value="all" className="dark:bg-slate-900 text-slate-900 dark:text-slate-100">
                 🇱🇰 All Branches
@@ -74,7 +73,7 @@ export const Header: React.FC = () => {
             ))}
           </div>
 
-          {/* Quick Theme Toggle Button (Sleek and compact across all screens) */}
+          {/* Quick Theme Toggle Button */}
           <button
             onClick={toggleTheme}
             className="p-1 sm:p-1.5 rounded-lg bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-amber-400 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors cursor-pointer shrink-0"
@@ -86,6 +85,26 @@ export const Header: React.FC = () => {
             ) : (
               <Moon className="w-3.5 h-3.5 text-slate-700" />
             )}
+          </button>
+
+          {/* Active Profile Switcher Button (Accountant / Mudalali) */}
+          <button
+            onClick={() => setIsLoginScreenOpen(true)}
+            className={`flex items-center gap-1 px-1.5 py-1 sm:px-2.5 sm:py-1.5 rounded-lg border text-[10px] sm:text-xs font-bold transition-colors cursor-pointer shrink-0 ${
+              currentUser?.role === 'accountant'
+                ? 'bg-sky-50 dark:bg-sky-950/50 border-sky-200 dark:border-sky-800 text-sky-700 dark:text-sky-300 hover:bg-sky-100'
+                : 'bg-amber-50 dark:bg-amber-950/50 border-amber-200 dark:border-amber-800 text-amber-800 dark:text-amber-300 hover:bg-amber-100'
+            }`}
+            title="Switch Login Profile (Accountant / Mudalali)"
+          >
+            {currentUser?.role === 'accountant' ? (
+              <Calculator className="w-3.5 h-3.5 shrink-0" />
+            ) : (
+              <Crown className="w-3.5 h-3.5 shrink-0" />
+            )}
+            <span className="hidden md:inline">
+              {currentUser?.displayName || 'Select Profile'}
+            </span>
           </button>
         </div>
 

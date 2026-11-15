@@ -267,3 +267,154 @@ export type ActiveTab =
 export type Language = 'en' | 'si' | 'ta';
 
 export type ThemeMode = 'light' | 'dark';
+
+export type UserRole = 'accountant' | 'mudalali';
+
+export interface UserProfile {
+  id: string;
+  role: UserRole;
+  displayName: string;
+  sinhalaTitle: string;
+  tamilTitle: string;
+  subtitle: string;
+  sinhalaSubtitle: string;
+  tamilSubtitle: string;
+  accessScope: string[];
+  permissions: {
+    canViewExecutiveAnalytics: boolean;
+    canApproveCreditOverrides: boolean;
+    canEditAccountingAudits: boolean;
+    canCloseDrawer: boolean;
+    canResetSystemData: boolean;
+    canManageSuppliers: boolean;
+  };
+}
+
+export interface DebtorRiskAssessment {
+  customerId: string;
+  name: string;
+  phone: string;
+  nicNumber: string;
+  branchId: BranchId;
+  totalOutstanding: number;
+  creditLimit: number;
+  utilizationPct: number;
+  daysSinceLastPayment: number;
+  returnedChequesCount: number;
+  riskScore: number; // 0-100
+  riskTier: 'Low' | 'Elevated' | 'Critical';
+  recommendedAction: string;
+}
+
+export interface ProductMarginMetric {
+  id: string;
+  code: string;
+  name: string;
+  category: string;
+  costPrice: number;
+  wholesalePrice: number;
+  retailPrice: number;
+  unit: string;
+  retailProfit: number;
+  retailMarginPct: number;
+  wholesaleProfit: number;
+  wholesaleMarginPct: number;
+  totalUnits: number;
+  stockValueCost: number;
+  potentialProfit: number;
+  suggestedReorderUnits: number;
+  estimatedReorderCost: number;
+}
+
+export interface BranchDiagnostic {
+  branchId: BranchId;
+  branchName: string;
+  address: string;
+  manager: string;
+  stockCount: number;
+  inventoryValueCost: number;
+  lowStockCount: number;
+  outOfStockCount: number;
+  creditTotal: number;
+  activePlans: number;
+  overduePlans: number;
+  overdueInstalmentAmount: number;
+  returnedChequesCount: number;
+  salesCount: number;
+  salesRevenue: number;
+  riskScore: number;
+  healthScore: number; // 0-100
+  primaryDrivers: string[];
+}
+
+export interface BackendAnalyticsReport {
+  computedAt: string;
+  engineVersion: string;
+  cashFlow: {
+    posCashCollected: number;
+    creditCashCollected: number;
+    instalmentCashCollected: number;
+    clearedCustomerCheques: number;
+    totalActuallyCollected: number;
+    pettyCashExpenses: number;
+    cashConversionRatePct: number;
+    currentCashInDrawer: number;
+  };
+  liquidityAndAffordability: {
+    estimatedBankCapital: number;
+    pendingReceivedPdcsRaw: number;
+    riskAdjustedPdcInflows: number;
+    expectedMonthlyCollections: number;
+    totalLiquidAssets: number;
+    committedSupplierDebt: number;
+    pendingIssuedPdcs: number;
+    committedLiabilities: number;
+    netSafeCapitalAvailable: number;
+    simulatedPurchaseAmount: number;
+    purchaseDeficit: number;
+    canAffordCash: boolean;
+    recommendedDownPayment: number;
+    balanceToNegotiatePdc: number;
+    affordabilityVerdict: string;
+  };
+  debtors: {
+    unpaidDebtorsCount: number;
+    totalCreditReceivables: number;
+    overdueInstalmentsCount: number;
+    totalOverdueInstalments: number;
+    returnedChequesCount: number;
+    returnedChequesValue: number;
+    riskAssessments: DebtorRiskAssessment[];
+  };
+  marginsAndInventory: {
+    totalInventoryCostValue: number;
+    totalInventoryRetailValue: number;
+    averageGrossMarginPct: number;
+    lowStockSkuCount: number;
+    totalSuggestedReorderCost: number;
+    rankedProducts: ProductMarginMetric[];
+  };
+  branches: {
+    diagnostics: BranchDiagnostic[];
+    underperformingBranch: BranchDiagnostic | null;
+    topPerformingBranch: BranchDiagnostic | null;
+  };
+  chequeProjection: {
+    maturing7DaysInflow: number;
+    maturing7DaysOutflow: number;
+    net7DayChequeFlow: number;
+    totalPendingInflow: number;
+    totalPendingOutflow: number;
+    returnedExposure: number;
+  };
+  accountingLedgerSummary: {
+    totalCurrentAssets: number;
+    totalCurrentLiabilities: number;
+    netWorkingCapital: number;
+    debtToAssetRatioPct: number;
+    estimatedVatLiability: number;
+    drawerVariance: number;
+    auditStatus: 'Balanced' | 'Variance Flagged';
+  };
+}
+

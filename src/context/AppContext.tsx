@@ -16,7 +16,10 @@ import {
   Supplier,
   PurchaseOrder,
   PurchaseOrderItem,
-  SupplierPayment
+  SupplierPayment,
+  UserProfile,
+  UserRole,
+  BackendAnalyticsReport
 } from '../types';
 import {
   INITIAL_BRANCHES,
@@ -103,6 +106,24 @@ interface AppContextType {
   setShowBootScreen: (show: boolean) => void;
   completeBoot: (lang: Language) => void;
   triggerBootScreen: () => void;
+
+  // Profile Auth (Accountant & Mudalali)
+  currentUser: UserProfile | null;
+  authToken: string | null;
+  isLoginScreenOpen: boolean;
+  setIsLoginScreenOpen: (open: boolean) => void;
+  loginWithProfile: (
+    role: UserRole,
+    options?: { pin?: string; quickDemoLogin?: boolean }
+  ) => Promise<{ success: boolean; error?: string }>;
+  logoutProfile: () => void;
+
+  // Backend Calculations & Algorithms Engine
+  backendAnalytics: BackendAnalyticsReport | null;
+  isAnalyticsSyncing: boolean;
+  simulatedPurchaseAmount: number;
+  setSimulatedPurchaseAmount: (amount: number) => void;
+  refreshBackendAnalytics: (overridePurchaseAmount?: number) => Promise<void>;
 }
 
 const STORAGE_KEY = 'mudalali_sme_os_v1';
@@ -235,12 +256,156 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const [isAssistantModalOpen, setIsAssistantModalOpen] = useState(false);
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' | 'info' } | null>(null);
 
+  // Auth Profile state (Accountant & Mudalali)
+  const [authToken, setAuthToken] = useState<string | null>(() =>
+    localStorage.getItem(`${STORAGE_KEY}_auth_token`)
+  );
+  const [currentUser, setCurrentUser] = useState<UserProfile | null>(() => {
+    const saved = localStorage.getItem(`${STORAGE_KEY}_auth_user`);
+    try {
+      return saved ? JSON.parse(saved) : null;
+    } catch {
+      return null;
+    }
+  });
+  const [isLoginScreenOpen, setIsLoginScreenOpen] = useState<boolean>(() => {
+    return !localStorage.getItem(`${STORAGE_KEY}_auth_user`);
+  });
+
+  // Backend Analytics state
+  const [backendAnalytics, setBackendAnalytics] = useState<BackendAnalyticsReport | null>(null);
+  const [isAnalyticsSyncing, setIsAnalyticsSyncing] = useState<boolean>(false);
+  const [simulatedPurchaseAmount, setSimulatedPurchaseAmount] = useState<number>(2000000);
+
   const showToast = (message: string, type: 'success' | 'error' | 'info' = 'info') => {
     setToast({ message, type });
     setTimeout(() => {
       setToast(null);
     }, 3500);
   };
+
+  // Verify persisted session token on startup
+  useEffect(() => {
+    if (!authToken) return;
+    fetch('/api/auth/verify', {
+      headers: { Authorization: `Bearer ${authToken}` }
+    })
+      .then(res => (res.ok ? res.json() : null))
+      .then(data => {
+        if (data?.valid && data.profile) {
+          setCurrentUser(data.profile);
+          localStorage.setItem(`${STORAGE_KEY}_auth_user`, JSON.stringify(data.profile));
+        } else {
+          setCurrentUser(null);
+          setAuthToken(null);
+          localStorage.removeItem(`${STORAGE_KEY}_auth_user`);
+          localStorage.removeItem(`${STORAGE_KEY}_auth_token`);
+          setIsLoginScreenOpen(true);
+        }
+      })
+      .catch(() => {
+        // Keep optimistic local session if offline
+      });
+  }, []);
+
+  const loginWithProfile = async (
+    role: UserRole,
+    options?: { pin?: string; quickDemoLogin?: boolean }
+  ): Promise<{ success: boolean; error?: string }> => {
+    try {
+      const response = await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          role,
+          pin: options?.pin,
+          quickDemoLogin: options?.quickDemoLogin
+        })
+      });
+      const data = await response.json();
+      if (response.ok && data.success && data.profile && data.token) {
+        setCurrentUser(data.profile);
+        setAuthToken(data.token);
+        localStorage.setItem(`${STORAGE_KEY}_auth_user`, JSON.stringify(data.profile));
+        localStorage.setItem(`${STORAGE_KEY}_auth_token`, data.token);
+        setIsLoginScreenOpen(false);
+        showToast(
+          `Signed in as ${data.profile.displayName} (${
+            data.profile.role === 'accountant' ? 'Ledger & Audit Mode' : 'Executive Owner Mode'
+          })`,
+          'success'
+        );
+        return { success: true };
+      }
+      return { success: false, error: data.error || 'Authentication failed' };
+    } catch {
+      return { success: false, error: 'Unable to reach authentication server.' };
+    }
+  };
+
+  const logoutProfile = () => {
+    setCurrentUser(null);
+    setAuthToken(null);
+    localStorage.removeItem(`${STORAGE_KEY}_auth_user`);
+    localStorage.removeItem(`${STORAGE_KEY}_auth_token`);
+    setIsLoginScreenOpen(true);
+    showToast('Signed out. Select Accountant or Mudalali profile.', 'info');
+  };
+
+  const refreshBackendAnalytics = async (overridePurchaseAmount?: number) => {
+    setIsAnalyticsSyncing(true);
+    try {
+      const response = await fetch('/api/analytics/compute', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(authToken ? { Authorization: `Bearer ${authToken}` } : {})
+        },
+        body: JSON.stringify({
+          branches,
+          products,
+          creditCustomers,
+          instalmentPlans,
+          cheques,
+          sales,
+          suppliers,
+          dailyDrawer,
+          dailyExpenses,
+          simulatedPurchaseAmount: overridePurchaseAmount ?? simulatedPurchaseAmount,
+          branchScope: currentBranchId
+        })
+      });
+      if (response.ok) {
+        const data = await response.json();
+        if (data.ok && data.report) {
+          setBackendAnalytics(data.report);
+        }
+      }
+    } catch (err) {
+      console.error('Backend analytics sync failed:', err);
+    } finally {
+      setIsAnalyticsSyncing(false);
+    }
+  };
+
+  // Automatically re-compute backend calculations & algorithms when financial state changes
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      refreshBackendAnalytics();
+    }, 120);
+    return () => clearTimeout(timer);
+  }, [
+    products,
+    creditCustomers,
+    instalmentPlans,
+    cheques,
+    sales,
+    suppliers,
+    dailyDrawer,
+    dailyExpenses,
+    simulatedPurchaseAmount,
+    currentBranchId
+  ]);
 
   // Sync to LocalStorage
   useEffect(() => {
@@ -922,7 +1087,18 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         showBootScreen,
         setShowBootScreen,
         completeBoot,
-        triggerBootScreen
+        triggerBootScreen,
+        currentUser,
+        authToken,
+        isLoginScreenOpen,
+        setIsLoginScreenOpen,
+        loginWithProfile,
+        logoutProfile,
+        backendAnalytics,
+        isAnalyticsSyncing,
+        simulatedPurchaseAmount,
+        setSimulatedPurchaseAmount,
+        refreshBackendAnalytics
       }}
     >
       {children}

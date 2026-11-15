@@ -16,7 +16,10 @@ import {
   Sparkles,
   Building2,
   Sun,
-  Moon
+  Moon,
+  Calculator,
+  Crown,
+  LogOut
 } from 'lucide-react';
 
 export const BottomNav: React.FC = () => {
@@ -33,7 +36,10 @@ export const BottomNav: React.FC = () => {
     setIsDailyDrawerOpen,
     setIsTransferModalOpen,
     resetAllData,
-    showToast
+    showToast,
+    currentUser,
+    setIsLoginScreenOpen,
+    logoutProfile
   } = useApp();
 
   const [isMoreMenuOpen, setIsMoreMenuOpen] = useState(false);
@@ -354,6 +360,58 @@ export const BottomNav: React.FC = () => {
                       ))}
                     </select>
                   </div>
+                </div>
+              </div>
+
+              {/* Active Login Profile Card (Accountant / Mudalali) */}
+              <div className="p-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50/80 dark:bg-slate-800/60 flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <div
+                    className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${
+                      currentUser?.role === 'accountant'
+                        ? 'bg-sky-600 text-white'
+                        : 'bg-amber-500 text-slate-950'
+                    }`}
+                  >
+                    {currentUser?.role === 'accountant' ? (
+                      <Calculator className="w-4 h-4" />
+                    ) : (
+                      <Crown className="w-4 h-4" />
+                    )}
+                  </div>
+                  <div className="min-w-0">
+                    <div className="text-xs font-extrabold text-slate-900 dark:text-slate-100 truncate">
+                      {currentUser?.displayName || 'Not Signed In'}
+                    </div>
+                    <div className="text-[10px] text-slate-500 dark:text-slate-400 truncate">
+                      {currentUser?.role === 'accountant'
+                        ? 'Ledger, Audit & Tax Mode'
+                        : 'Executive Owner Mode'}
+                    </div>
+                  </div>
+                </div>
+                <div className="flex items-center gap-1.5 shrink-0">
+                  <button
+                    onClick={() => {
+                      setIsMoreMenuOpen(false);
+                      setIsLoginScreenOpen(true);
+                    }}
+                    className="px-2.5 py-1.5 rounded-lg bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900 text-[11px] font-bold cursor-pointer"
+                  >
+                    Switch
+                  </button>
+                  {currentUser && (
+                    <button
+                      onClick={() => {
+                        setIsMoreMenuOpen(false);
+                        logoutProfile();
+                      }}
+                      className="p-1.5 rounded-lg bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-200 cursor-pointer"
+                      title="Sign Out"
+                    >
+                      <LogOut className="w-3.5 h-3.5" />
+                    </button>
+                  )}
                 </div>
               </div>
 
